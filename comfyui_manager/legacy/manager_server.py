@@ -162,8 +162,10 @@ async def get_risky_level(files, pip_packages):
 
 
 class ManagerFuncsInComfyUI(core.ManagerFuncs):
-    def is_flagged_install_allowed(self):
-        return core.get_config()['allow_flagged_nodepack_install'] or manager_security.is_loopback_listener(args.listen)
+    def is_flagged_install_allowed(self, node_id):
+        return (core.get_config()['allow_flagged_nodepack_install']
+                or manager_security.is_loopback_listener(args.listen)
+                or manager_security.is_flagged_nodepack_whitelisted(node_id, context.manager_files_path))
 
     def run_script(self, cmd, cwd='.'):
         if len(cmd) > 0 and cmd[0].startswith("#"):

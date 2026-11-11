@@ -18,6 +18,7 @@ DO NOT add the gate to body-reading handlers (redundant + UX-breaking).
 DO NOT remove the gate from no-body handlers (this is the bypass vector).
 """
 
+import logging
 import os
 from enum import Enum
 from typing import Optional
@@ -26,6 +27,8 @@ from aiohttp import web
 
 is_personal_cloud_mode = False
 handler_policy = {}
+
+FLAGGED_NODEPACK_WHITELIST_FILE = 'nodepack-whitelist.list'
 
 FLAGGED_NODEPACK_INSTALL_ERROR = (
     'This action is not allowed by the current security configuration. '
@@ -39,7 +42,10 @@ FLAGGED_NODEPACK_INSTALL_GUIDANCE = (
     '   Do not use bare --listen or any non-loopback address, such as 0.0.0.0 or ::.\n'
     '2. For a trusted private network, set allow_flagged_nodepack_install = true '
     'in the [default] section of ComfyUI-Manager\'s config.ini.\n'
-    'Restart ComfyUI after changing the listener or configuration. '
+    '3. To allow specific packs, add their Registry pack IDs (case-insensitive), one per line, '
+    f'to {FLAGGED_NODEPACK_WHITELIST_FILE} beside ComfyUI-Manager\'s config.ini. '
+    'Whitelist changes apply to subsequent installations without a restart.\n'
+    'Restart ComfyUI after changing the listener or config.ini. '
     'All other installation security checks still apply.'
 )
 
@@ -118,6 +124,44 @@ def is_loopback_listener(listen_address: str) -> bool:
         if not resolved or any(not is_loopback(item[4][0]) for item in resolved):
             return False
     return True
+
+
+def ensure_nodepack_whitelist(manager_files_path):
+    """Create a commented template without replacing an existing whitelist."""
+    path = os.path.join(manager_files_path, FLAGGED_NODEPACK_WHITELIST_FILE)
+    try:
+        os.makedirs(manager_files_path, exist_ok=True)
+        with open(path, 'x', encoding='utf-8') as file:
+            file.write(
+                '# Allow selected flagged CNR nodepacks on non-local listeners.\n'
+                '# One Registry ID per line; IDs are case-insensitive and apply to all versions.\n'
+                '# Blank lines and # comments are ignored. Changes apply without restarting.\n'
+                '# Other installation security checks still apply.\n'
+                '#\n'
+                '# Example entries (commented out; uncomment to allow):\n'
+                '# comfyui-impact-pack\n'
+                '# comfyui-inspire-pack # Optional inline comment\n'
+            )
+    except FileExistsError:
+        pass
+    except OSError as exc:
+        logging.warning('[ComfyUI-Manager] Cannot create nodepack whitelist %s: %s', path, exc)
+
+
+def is_flagged_nodepack_whitelisted(node_id: str, manager_files_path) -> bool:
+    """Match a whole Registry ID, ignoring case, in the current Manager whitelist."""
+    if not manager_files_path:
+        return False
+    path = os.path.join(manager_files_path, FLAGGED_NODEPACK_WHITELIST_FILE)
+    try:
+        with open(path, encoding='utf-8-sig') as file:
+            entries = (line.split('#', 1)[0].strip() for line in file)
+            return node_id.lower() in {entry.lower() for entry in entries if entry}
+    except FileNotFoundError:
+        return False
+    except (OSError, UnicodeError) as exc:
+        logging.warning('[ComfyUI-Manager] Cannot read flagged nodepack whitelist %s: %s', path, exc)
+        return False
 
 
 def is_cnr_install_allowed(status: str, allow_flagged: bool, listen_address: str) -> bool:
